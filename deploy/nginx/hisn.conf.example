@@ -1,0 +1,28 @@
+# Replace SERVER_NAME and configure a real TLS certificate before public access.
+# Run Vite build and copy dist/ to /var/www/hisn.
+server {
+    listen 80;
+    server_name SERVER_NAME;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl http2;
+    server_name SERVER_NAME;
+    ssl_certificate /etc/letsencrypt/live/SERVER_NAME/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/SERVER_NAME/privkey.pem;
+    add_header X-Frame-Options DENY always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
+    root /var/www/hisn;
+    index index.html;
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 15s;
+    }
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

@@ -1,0 +1,772 @@
+
+/* =========================================
+   HISN - Global Login Page
+========================================= */
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+
+  background:
+    radial-gradient(
+      circle at 15% 20%,
+      #153557 0%,
+      transparent 35%
+    ),
+    #07111f;
+}
+
+/* =========================================
+   Login Container
+========================================= */
+
+.login-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+
+  width: 100%;
+  max-width: 1050px;
+  min-height: 580px;
+
+  border: 1px solid #29405c;
+  border-radius: 20px;
+  overflow: hidden;
+
+  background: #101f32;
+  box-shadow: 0 25px 70px #0005;
+}
+
+/* =========================================
+   Brand Panel
+========================================= */
+
+.brand-panel {
+  padding: 42px;
+
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+
+  background: linear-gradient(
+    145deg,
+    #102b49,
+    #09172a
+  );
+
+  color: white;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.brand-icon {
+  display: grid;
+  place-items: center;
+
+  width: 54px;
+  height: 54px;
+
+  border-radius: 14px;
+  background: #1a456c;
+
+  color: #66baff;
+  font-size: 36px;
+}
+
+.brand h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.brand span {
+  color: #9ab3cd;
+  font-size: 11px;
+  letter-spacing: 2px;
+}
+
+.brand-content {
+  max-width: 390px;
+}
+
+.security-icon {
+  font-size: 64px;
+  margin-bottom: 20px;
+}
+
+.brand-content h1 {
+  font-size: 31px;
+  line-height: 1.5;
+}
+
+.brand-content p {
+  color: #b0c3d9;
+  line-height: 2;
+}
+
+.security-label {
+  margin-top: 30px;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #65c5ff;
+}
+
+.brand-footer {
+  color: #819bb5;
+  font-size: 12px;
+}
+
+/* =========================================
+   Login Form Panel
+========================================= */
+
+.form-panel {
+  padding: 70px 55px;
+
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+
+  color: white;
+}
+
+.form-header {
+  margin-bottom: 35px;
+}
+
+.form-header h2 {
+  font-size: 30px;
+  margin-bottom: 10px;
+}
+
+.form-header p {
+  color: #9db1c8;
+}
+
+.form-group {
+  margin-bottom: 25px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 10px;
+
+  color: #dce7f5;
+  font-size: 14px;
+}
+
+.form-group input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 15px;
+
+  border-radius: 9px;
+  border: 1px solid #344c67;
+
+  background: #0b192b;
+  color: white;
+
+  font-size: 14px;
+  outline: none;
+
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.form-group input::placeholder {
+  color: #70869f;
+}
+
+.form-group input:focus {
+  border-color: #399dff;
+  box-shadow: 0 0 0 3px #399dff22;
+}
+
+.form-group input:disabled {
+  opacity: 0.7;
+}
+
+/* =========================================
+   Password Field
+========================================= */
+
+.password-field {
+  position: relative;
+}
+
+.password-field input {
+  padding-left: 75px;
+}
+
+.toggle-password {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+
+  transform: translateY(-50%);
+
+  border: none;
+  background: transparent;
+
+  color: #79bfff;
+  cursor: pointer;
+
+  font-size: 13px;
+}
+
+.toggle-password:hover {
+  color: #b6ddff;
+}
+
+.toggle-password:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* =========================================
+   Login Button
+========================================= */
+
+.login-button {
+  width: 100%;
+  padding: 15px;
+
+  border: none;
+  border-radius: 9px;
+
+  background: #2586e7;
+  color: white;
+
+  font-size: 16px;
+  font-weight: 600;
+
+  cursor: pointer;
+
+  transition:
+    background 0.2s,
+    opacity 0.2s;
+}
+
+.login-button:hover:not(:disabled) {
+  background: #1475d4;
+}
+
+.login-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* =========================================
+   Error Message
+========================================= */
+
+.login-error {
+  color: #ffaaaa;
+  background: #4b202855;
+
+  border: 1px solid #9f414b;
+  border-radius: 8px;
+
+  padding: 12px;
+  margin-bottom: 18px;
+
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+/* =========================================
+   Form Footer
+========================================= */
+
+.form-footer {
+  margin-top: 35px;
+
+  text-align: center;
+  color: #7e95ad;
+
+  font-size: 12px;
+}
+
+/* =========================================
+   Login Success Screen
+========================================= */
+
+.success-panel {
+  width: 100%;
+  max-width: 480px;
+
+  padding: 48px;
+
+  text-align: center;
+
+  background: #101f32;
+  border: 1px solid #29405c;
+  border-radius: 20px;
+
+  color: white;
+
+  box-shadow: 0 25px 70px #0005;
+}
+
+.success-icon {
+  width: 72px;
+  height: 72px;
+
+  margin: 0 auto 24px;
+
+  display: grid;
+  place-items: center;
+
+  border-radius: 50%;
+
+  background: #123f39;
+  color: #5de0b0;
+
+  font-size: 40px;
+}
+
+.success-brand {
+  color: #65b8ff;
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 15px;
+}
+
+.success-panel h1 {
+  font-size: 26px;
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.success-message {
+  color: #5de0b0 !important;
+  font-weight: 600;
+  font-size: 17px;
+}
+
+.success-description {
+  color: #a9bfd6;
+  line-height: 1.9;
+  font-size: 14px;
+}
+
+.success-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+
+  padding: 10px 16px;
+  margin-top: 15px;
+
+  border-radius: 30px;
+  background: #123f3955;
+
+  color: #5de0b0;
+  font-size: 13px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+
+  border-radius: 50%;
+  background: #5de0b0;
+}
+
+.logout-button {
+  margin-top: 30px;
+}
+
+.success-note {
+  margin-top: 25px;
+  color: #819bb5;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+/* =========================================
+   Responsive Design
+========================================= */
+
+@media (max-width: 800px) {
+  .login-container {
+    grid-template-columns: 1fr;
+  }
+
+  .brand-panel {
+    padding: 25px;
+    gap: 25px;
+  }
+
+  .brand-content {
+    display: none;
+  }
+
+  .form-panel {
+    padding: 40px 25px;
+  }
+
+  .success-panel {
+    padding: 35px 25px;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-page {
+    padding: 14px;
+  }
+
+  .form-header h2 {
+    font-size: 25px;
+  }
+
+  .brand h2 {
+    font-size: 19px;
+  }
+}
+
+
+/* HISN Security Dashboard */
+
+.dashboard-page {
+  display: flex;
+  min-height: 100vh;
+  background: #07111f;
+  color: #ffffff;
+}
+
+.dashboard-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  background: #102139;
+  border-left: 1px solid #29405c;
+  padding: 28px 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 45px;
+}
+
+.dashboard-logo span {
+  font-size: 35px;
+  color: #66baff;
+}
+
+.dashboard-logo h2 {
+  font-size: 20px;
+  margin: 0;
+}
+
+.dashboard-logo small {
+  color: #8eaac6;
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+
+.dashboard-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nav-item {
+  padding: 14px;
+  border-radius: 9px;
+  color: #a9bfd6;
+  font-size: 14px;
+}
+
+.nav-item.active {
+  background: #1d4772;
+  color: #ffffff;
+}
+
+.dashboard-logout {
+  margin-top: auto;
+  padding: 13px;
+  background: #243a54;
+  color: #ffffff;
+  border: 1px solid #395471;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.dashboard-logout:hover {
+  background: #345372;
+}
+
+.dashboard-main {
+  flex: 1;
+  min-width: 0;
+  padding: 35px;
+}
+
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 35px;
+}
+
+.dashboard-header h1 {
+  font-size: 26px;
+  margin: 0 0 10px;
+}
+
+.dashboard-header p {
+  color: #91aac4;
+  margin: 0;
+}
+
+.dashboard-admin {
+  padding: 10px 18px;
+  background: #162c45;
+  border: 1px solid #29405c;
+  border-radius: 9px;
+}
+
+.dashboard-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.stat-card {
+  padding: 25px;
+  border: 1px solid #29405c;
+  border-radius: 14px;
+  background: #102139;
+}
+
+.stat-card h3 {
+  color: #b0c5db;
+  font-size: 14px;
+  margin: 0 0 20px;
+}
+
+.stat-card strong {
+  font-size: 34px;
+}
+
+.stat-card p {
+  color: #819bb5;
+  font-size: 12px;
+}
+
+.dashboard-events {
+  margin-top: 30px;
+  padding: 28px;
+  min-height: 220px;
+  background: #102139;
+  border: 1px solid #29405c;
+  border-radius: 14px;
+}
+
+.dashboard-events h2 {
+  font-size: 18px;
+}
+
+.dashboard-events p {
+  color: #91aac4;
+  margin-top: 35px;
+  text-align: center;
+}
+
+@media (max-width: 1100px) {
+  .dashboard-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .dashboard-page {
+    flex-direction: column;
+  }
+
+  .dashboard-sidebar {
+    width: 100%;
+    gap: 15px;
+  }
+
+  .dashboard-logo {
+    margin-bottom: 5px;
+  }
+
+  .dashboard-logout {
+    margin-top: 10px;
+  }
+
+  .dashboard-main {
+    padding: 20px;
+  }
+
+  .dashboard-stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* HISN Login Lockout */
+
+.login-lockout {
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 12px;
+  background: rgba(239, 68, 68, 0.08);
+  color: #fca5a5;
+  text-align: center;
+}
+
+.login-lockout strong {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 16px;
+}
+
+.login-lockout p {
+  margin: 8px 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.lockout-timer {
+  margin-top: 14px;
+  font-size: 36px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 3px;
+  color: #f87171;
+  direction: ltr;
+}
+
+.login-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.auth-loading {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: #0b1220;
+  color: #f8fafc;
+}
+
+.auth-loading p {
+  color: #94a3b8;
+}
+
+.auth-error {
+  padding: 12px;
+  background: #7f1d1d;
+  color: white;
+  text-align: center;
+}/* Functional security console views; no local mock data. */
+.dashboard-nav button.nav-item { display: block; border: none; width: 100%; text-align: right; cursor: pointer; font: inherit; color: inherit; background: transparent; }
+.dashboard-nav button.nav-item.active { background: rgba(59,130,246,.16); }
+.hisn-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 14px 0; }
+.hisn-actions button, .hisn-form button { background: #2563eb; color: white; border: 0; border-radius: 8px; padding: 10px 16px; cursor: pointer; }
+.hisn-actions button:disabled { background: #64748b; cursor: not-allowed; }
+.hisn-form { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; align-items: flex-end; }
+.hisn-form label { display: flex; flex-direction: column; gap: 6px; }
+.hisn-form input, .hisn-form select { padding: 9px 10px; border-radius: 6px; border: 1px solid #64748b; color: #0f172a; background: white; }
+.hisn-table-wrap { overflow-x: auto; width: 100%; }
+.hisn-table { border-collapse: collapse; width: 100%; font-size: 0.82rem; direction: ltr; }
+.hisn-table th, .hisn-table td { border-bottom: 1px solid #475569; padding: 10px; text-align: left; max-width: 320px; overflow-wrap: anywhere; }
+.hisn-table th { font-weight: 700; }
+.hisn-error { color: #f87171; }
+.hisn-notice { color: #4ade80; }
+.hisn-result { white-space: pre-wrap; overflow-wrap: anywhere; direction: ltr; }
+
+/* HISN Threat Intelligence Table */
+.hisn-threat-panel {
+  min-width: 0;
+}
+
+.hisn-threat-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.hisn-threat-filters input,
+.hisn-threat-filters select {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.hisn-threat-toolbar,
+.hisn-threat-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  flex-wrap: wrap;
+}
+
+.hisn-threat-panel .hisn-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.hisn-threat-panel .hisn-table {
+  width: 100%;
+  min-width: 850px;
+  table-layout: auto;
+}
+
+.hisn-threat-panel .hisn-table th,
+.hisn-threat-panel .hisn-table td {
+  padding: 10px 12px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.hisn-indicator-value {
+  min-width: 210px;
+  max-width: 340px;
+  overflow-wrap: anywhere;
+  white-space: normal !important;
+  text-align: left;
+}
+
+.hisn-confidence {
+  display: inline-block;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-weight: 700;
+}
+
+.hisn-confidence.HIGH {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.hisn-confidence.MEDIUM {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.hisn-confidence.LOW {
+  background: #dbeafe;
+  color: #1e40af;
+}
+

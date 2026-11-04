@@ -1,0 +1,169 @@
+"""Read-only authorization preflight for HISN blocking actions."""
+
+import argparse
+from datetime import datetime, timezone
+
+from sqlalchemy import select
+
+from app.core.database import SessionLocal
+from app.models.blocking_action import BlockingAction
+from app.models.blocking_exception import BlockingException
+from app.models.threat_indicator import ThreatIndicator
+from app.security_engine.detection import (
+    indicator_usable,
+    matches_indicator,
+    response_decision,
+)
+from scripts.enforcement_dry_run import (
+    inspect_file,
+    valid_domain,
+)
+from scripts.enforcement_exception_check import (
+    check as check_e2_exceptions,
+)
+
+
+def validate_action(db, action):
+    reasons = []
+
+    if action.execution_status not in (
+        "PENDING", "STAGED", "ALREADY_STAGED"
+    ):
+        reasons.append("INVALID_ACTION_STATUS")
+
+    if action.action_source != "HISN":
+        reasons.append("UNEXPECTED_ACTION_SOURCE")
+
+    indicator = (
+        db.get(ThreatIndicator, action.indicator_id)
+        if action.indicator_id is not None
+        else None
+    )
+
+    if indicator is None:
+        reasons.append("MISSING_INDICATOR")
+        return reasons
+
+    if indicator.indicator_type != "DOMAIN":
+        reasons.append("UNSUPPORTED_INDICATOR_TYPE")
+
+    if not valid_domain(action.target_value):
+        reasons.append("INVALID_TARGET_DOMAIN")
+        return reasons
+
+    if not indicator_usable(indicator, datetime.now(timezone.utc)):
+        reasons.append("INDICATOR_NOT_USABLE")
+
+    if indicator.confidence_level != "HIGH":
+        reasons.append("NOT_HIGH_CONFIDENCE")
+
+    if not matches_indicator(
+        action.target_value,
+        indicator.indicator_type,
+        indicator.indicator_value,
+    ):
+        reasons.append("TARGET_INDICATOR_MISMATCH")
+
+    exceptions = db.scalars(
+        select(BlockingException)
+    ).all()
+
+    decision = response_decision(
+        indicator,
+        action.target_value,
+        exceptions,
+        allowed=True,
+    )
+
+    if decision.action != "BLOCK_ELIGIBLE":
+        reasons.append(
+            f"RESPONSE_DECISION_{decision.action}"
+        )
+
+    try:
+        _, staged_domains, invalid_lines = inspect_file()
+
+        if invalid_lines:
+            reasons.append("INVALID_STAGING_CONTENT")
+
+        if action.execution_status in (
+            "STAGED", "ALREADY_STAGED"
+        ) and action.target_value not in staged_domains:
+            reasons.append("TARGET_NOT_STAGED")
+
+    except Exception as exc:
+        reasons.append(
+            f"STAGING_CHECK_FAILED: {type(exc).__name__}"
+        )
+
+    try:
+        findings = check_e2_exceptions(action.target_value)
+
+        for status, reason in findings:
+            reasons.append(f"{status}: {reason}")
+
+    except Exception as exc:
+        reasons.append(
+            f"EXCEPTION_CHECK_FAILED: {type(exc).__name__}"
+        )
+
+    return reasons
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--action-id", type=int)
+    parser.add_argument("--list", action="store_true")
+    args = parser.parse_args()
+
+    if not args.list and args.action_id is None:
+        parser.error("Specify --list or --action-id")
+
+    with SessionLocal() as db:
+        if args.list:
+            actions = db.scalars(
+                select(BlockingAction)
+                .order_by(BlockingAction.action_id.desc())
+                .limit(10)
+            ).all()
+
+            print("=== RECENT BLOCKING ACTIONS ===")
+
+            for action in actions:
+                print(
+                    f"ID={action.action_id} "
+                    f"STATUS={action.execution_status} "
+                    f"TARGET={action.target_value}"
+                )
+
+            print("Actions displayed:", len(actions))
+            return
+
+        action = db.get(BlockingAction, args.action_id)
+
+        if action is None:
+            print("RESULT: ACTION_NOT_FOUND")
+            raise SystemExit(2)
+
+        print("=== HISN ACTION PREFLIGHT ===")
+        print("Action ID:", action.action_id)
+        print("Target:", action.target_value)
+        print("Current status:", action.execution_status)
+
+        findings = validate_action(db, action)
+
+        if findings:
+            for finding in findings:
+                print("CHECK:", finding)
+
+            print("RESULT: NOT AUTHORIZED")
+            raise SystemExit(2)
+
+        print("RESULT: PRELIMINARY CHECKS PASSED")
+        print("NOTE: Not an authorization to apply policy")
+        print("Database changes: NONE")
+        print("Policy changes: NONE")
+
+
+if __name__ == "__main__":
+    main()

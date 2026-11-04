@@ -1,0 +1,469 @@
+import ClientSecurityPanel from "../components/ClientSecurityPanel";
+import SecurityConsole from "../components/SecurityConsole";
+import SecuritySummary from "../components/SecuritySummary";
+
+import { useEffect, useState } from "react";
+import DiskMonitoring from "../components/DiskMonitoring";
+import NetworkMonitoring from "../components/NetworkMonitoring";
+import ServiceMonitoring from "../components/ServiceMonitoring";
+import type { MonitoringOverview } from "../types/monitoring";
+type UserRole = "admin" | "viewer";
+
+type DashboardPageProps = {
+  user: {
+    id: number;
+    username: string;
+    role: UserRole;
+  };
+  onLogout: () => void;
+};
+
+const adminMenu = [
+  {name: "الأحداث الأمنية", key: "events"},
+  {name: "الحوادث الأمنية", key: "incidents"},
+  {name: "مؤشرات التهديدات", key: "threats"},
+  {name: "قواعد الكشف", key: "rules"},
+  {name: "قرارات الحجب", key: "decisions"},
+  {name: "إدارة Squid", key: "squid"},
+  {name: "إدارة E2Guardian", key: "e2guardian"},
+  {name: "الاستثناءات", key: "exceptions"},
+  {name: "سجل التدقيق", key: "audit"},
+  {name: "المستخدمون والجلسات", key: "users"},
+  {name: "الإعدادات", key: "settings"},
+] as const;
+
+
+function formatBytes(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "غير متاح";
+  }
+
+  if (value < 1024) return `${value.toFixed(0)} B`;
+
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = value;
+  let unitIndex = -1;
+
+  do {
+    size /= 1024;
+    unitIndex++;
+  } while (size >= 1024 && unitIndex < units.length - 1);
+
+  return `${size.toFixed(2)} ${units[unitIndex]}`;
+}
+
+function formatPercent(value: number): string {
+  return Number.isFinite(value)
+    ? `${value.toFixed(1)}%`
+    : "غير متاح";
+}
+
+function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    healthy: "سليم",
+    degraded: "يعمل مع مشكلة",
+    running: "قيد التشغيل",
+    stopped: "متوقف",
+    unavailable: "غير متاح للتحقق",
+    unknown: "غير معروف",
+  };
+
+  return labels[status] ?? "حالة غير معروفة";
+}
+
+function statusColor(status: string): string {
+  if (status === "healthy" || status === "running") {
+    return "#22c55e";
+  }
+
+  if (status === "stopped") return "#ef4444";
+  if (status === "degraded") return "#f59e0b";
+
+  return "#94a3b8";
+}
+
+function DashboardPage({
+  user,
+  onLogout,
+}: DashboardPageProps) {
+  const isAdmin = user.role === "admin";
+  const tabs = ['dashboard', 'monitoring', 'clients', ...adminMenu.map(x => x.key)] as const;
+  type Tab = typeof tabs[number];
+  const [tab, setTab] = useState<Tab>(() => {
+    const hash = window.location.hash.slice(1);
+    return (tabs as readonly string[]).includes(hash) ? hash as Tab : 'dashboard';
+  });
+  useEffect(() => {
+    const update = () => {
+      const hash = window.location.hash.slice(1);
+      setTab((tabs as readonly string[]).includes(hash) ? hash as Tab : 'dashboard');
+    };
+    window.addEventListener('hashchange', update);
+    return () => window.removeEventListener('hashchange', update);
+  }, []);
+  const go = (next: Tab) => {window.location.hash = next; setTab(next);};
+
+  const [monitoring, setMonitoring] =
+    useState<MonitoringOverview | null>(null);
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(
+    null
+  );
+  const [now, setNow] = useState(() => Date.now());
+  const stale = Boolean(
+    lastUpdated && now - lastUpdated.getTime() > 15000
+  );
+
+  useEffect(() => {
+    let active = true;
+    let requestInProgress = false;
+    let controller: AbortController | null = null;
+
+    async function loadMonitoring() {
+      if (requestInProgress || !active) return;
+
+      requestInProgress = true;
+      const requestController = new AbortController();
+      controller = requestController;
+      const timeout = window.setTimeout(() => requestController.abort(), 10000);
+
+      try {
+        const response = await fetch(
+          "/api/monitoring/overview",
+          {
+            method: "GET",
+            headers: {
+
+            },
+            cache: "no-store",
+            signal: requestController.signal,
+          }
+        );
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new Error(
+              "انتهت صلاحية المصادقة. سجّل الدخول مجددًا."
+            );
+          }
+
+          if (response.status === 403) {
+            throw new Error(
+              "ليس لديك صلاحية قراءة بيانات المراقبة."
+            );
+          }
+
+          throw new Error(
+            `تعذر جلب بيانات المراقبة (${response.status})`
+          );
+        }
+
+        const data: MonitoringOverview =
+          await response.json();
+
+        if (
+          !data ||
+          !data.resources ||
+          !data.systems ||
+          typeof data.timestamp !== "string"
+        ) {
+          throw new Error("استجابة المراقبة غير صالحة");
+        }
+
+        if (active) {
+          setMonitoring(data);
+          setLastUpdated(new Date());
+          setError("");
+        }
+      } catch (err) {
+        if (active) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "حدث خطأ أثناء تحديث المراقبة"
+          );
+        }
+      } finally {
+        window.clearTimeout(timeout);
+        requestInProgress = false;
+
+        if (active) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadMonitoring();
+
+    const interval = window.setInterval(() => {
+      setNow(Date.now());
+      void loadMonitoring();
+    }, 5000);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      controller?.abort();
+    };
+  }, []);
+
+  const systems = monitoring
+    ? [
+        {
+          name: "HISN Backend",
+          data: monitoring.systems.hisn,
+        },
+        {
+          name: "Squid Proxy",
+          data: monitoring.systems.squid,
+        },
+        {
+          name: "E2Guardian",
+          data: monitoring.systems.e2guardian,
+        },
+      ]
+    : [];
+
+  const resources = monitoring
+    ? [
+        {
+          name: "CPU",
+          value: formatPercent(
+            monitoring.resources.cpu.usage_percent
+          ),
+          detail: `الأنوية المنطقية: ${
+            monitoring.resources.cpu.logical_cores ?? "—"
+          }`,
+        },
+        {
+          name: "RAM",
+          value: formatPercent(
+            monitoring.resources.memory.usage_percent
+          ),
+          detail:
+            `المستخدم: ${
+              formatBytes(monitoring.resources.memory.used_bytes)
+            } / ${
+              formatBytes(monitoring.resources.memory.total_bytes)
+            }`,
+        },
+        {
+          name: "Disk",
+          value: formatPercent(
+            monitoring.resources.disk.usage_percent
+          ),
+          detail:
+            `المستخدم: ${
+              formatBytes(monitoring.resources.disk.used_bytes)
+            } / ${
+              formatBytes(monitoring.resources.disk.total_bytes)
+            }`,
+        },
+      ]
+    : [];
+
+  return (
+    <main className="dashboard-page" dir="rtl">
+      <aside className="dashboard-sidebar">
+        <div className="dashboard-logo">
+          <span>⬡</span>
+          <div>
+            <h2>حِصن | HISN</h2>
+            <small>SECURE WEB GATEWAY</small>
+          </div>
+        </div>
+
+        <nav
+          className="dashboard-nav"
+          aria-label="القائمة الرئيسية"
+        >
+          <button type="button" className={`nav-item ${tab === 'dashboard' ? 'active' : ''}`} onClick={() => go('dashboard')}>الرئيسية</button>
+          <button type="button" className={`nav-item ${tab === 'monitoring' ? 'active' : ''}`} onClick={() => go('monitoring')}>مراقبة الأنظمة والموارد</button>
+          <button type="button" className={`nav-item ${tab === 'clients' ? 'active' : ''}`} onClick={() => go('clients')}>الأجهزة الطرفية</button>
+          {isAdmin && adminMenu.map(item => <button type="button" className={`nav-item ${tab === item.key ? 'active' : ''}`} key={item.key} onClick={() => go(item.key)}>{item.name}</button>)}
+        </nav>
+
+        <button
+          type="button"
+          className="dashboard-logout"
+          onClick={onLogout}
+        >
+          تسجيل الخروج
+        </button>
+      </aside>
+
+      <section className="dashboard-main">
+        <header className="dashboard-header">
+          <div>
+            <h1>
+              {isAdmin
+                ? "لوحة التحكم الأمنية"
+                : "لوحة المراقبة"}
+            </h1>
+
+            <p>
+              مراقبة HISN والأنظمة وموارد الجهاز
+            </p>
+          </div>
+
+          <span className="dashboard-admin">
+            {user.username} —{" "}
+            {isAdmin ? "المسؤول" : "المشاهد"}
+          </span>
+        </header>
+
+        {(tab === 'dashboard' || tab === 'monitoring') && <><section className="dashboard-events">
+          <h2>حالة تحديث المراقبة</h2>
+
+          {loading && !monitoring && (
+            <p>جارٍ تحميل القياسات...</p>
+          )}
+
+          {error && (
+            <p role="alert" style={{ color: "#f87171" }}>
+              {error}
+              {monitoring &&
+                " — البيانات المعروضة هي آخر قراءة ناجحة وقد تكون قديمة."}
+            </p>
+          )}
+
+          {stale && (
+            <p role="status" style={{ color: "#f59e0b" }}>
+              تنبيه: بيانات المراقبة قديمة، ولا تمثل الحالة اللحظية.
+            </p>
+          )}
+
+          {lastUpdated && (
+            <p>
+              آخر تحديث ناجح:{" "}
+              {lastUpdated.toLocaleTimeString("ar")}
+            </p>
+          )}
+
+          {monitoring && (
+            <p>
+              نظام التشغيل: {monitoring.host_os}
+              {" | "}
+              وقت القياس:{" "}
+              {new Date(
+                monitoring.timestamp
+              ).toLocaleString("ar")}
+            </p>
+          )}
+
+          <p>التحديث التلقائي كل 5 ثوانٍ.</p>
+        </section>
+
+        {monitoring && (
+          <>
+            <section className="dashboard-events">
+              <h2>حالة الأنظمة الثلاثة</h2>
+
+              <div className="dashboard-stats">
+                {systems.map(({ name, data }) => (
+                  <article
+                    className="stat-card"
+                    key={name}
+                  >
+                    <h3>{name}</h3>
+
+                    <strong
+                      style={{
+                        color: statusColor(data.status),
+                        fontSize: "1.25rem",
+                      }}
+                    >
+                      {statusLabel(data.status)}
+                    </strong>
+
+                    {data.database && (
+                      <p>
+                        قاعدة البيانات: {data.database}
+                      </p>
+                    )}
+
+                    {data.active_state && (
+                      <p>
+                        systemd: {data.active_state}
+                      </p>
+                    )}
+
+                    {data.reason && (
+                      <p>{data.reason}</p>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </section>
+
+            <section className="dashboard-events">
+              <h2>موارد الجهاز</h2>
+
+              <div className="dashboard-stats">
+                {resources.map((resource) => (
+                  <article
+                    className="stat-card"
+                    key={resource.name}
+                  >
+                    <h3>{resource.name}</h3>
+                    <strong>{resource.value}</strong>
+                    <p>{resource.detail}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+
+            <section className="dashboard-events">
+              <h2>حركة الشبكة</h2>
+
+              <div className="dashboard-stats">
+                <article className="stat-card">
+                  <h3>الإرسال</h3>
+                  <strong>
+                    {monitoring.resources.network
+                      .upload_bytes_per_second === null
+                      ? "غير متاح أو بانتظار عينة ثانية"
+                      : `${formatBytes(
+                          monitoring.resources.network
+                            .upload_bytes_per_second
+                        )}/s`}
+                  </strong>
+                  <p>معدل الإرسال على الجهاز</p>
+                </article>
+
+                <article className="stat-card">
+                  <h3>الاستقبال</h3>
+                  <strong>
+                    {monitoring.resources.network
+                      .download_bytes_per_second === null
+                      ? "غير متاح أو بانتظار عينة ثانية"
+                      : `${formatBytes(
+                          monitoring.resources.network
+                            .download_bytes_per_second
+                        )}/s`}
+                  </strong>
+                  <p>معدل الاستقبال على الجهاز</p>
+                </article>
+              </div>
+            </section>
+
+            <ServiceMonitoring systems={monitoring.systems} />
+
+            <DiskMonitoring disks={monitoring.resources.disks ?? []} />
+
+            <NetworkMonitoring network={monitoring.resources.network} />
+
+            {isAdmin && <SecuritySummary />}
+          </>
+        )}
+        </>}
+        {tab === "clients" && <ClientSecurityPanel />}
+        {isAdmin && tab !== "dashboard" && tab !== "monitoring" && tab !== "clients" && <SecurityConsole tab={tab} />}
+      </section>
+    </main>
+  );
+}
+
+export default DashboardPage;

@@ -1,0 +1,27 @@
+[Unit]
+Description=HISN E2Guardian threat processing worker
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=hisn
+Group=hisn
+WorkingDirectory=/opt/hisn/backend
+EnvironmentFile=/etc/hisn/hisn.env
+ExecStart=/opt/hisn/backend/.venv/bin/python -m app.jobs.worker --interval 5
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/hisn
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

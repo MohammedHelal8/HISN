@@ -1,0 +1,107 @@
+"""Read-only preflight for approved HISN enforcement requests."""
+
+import argparse
+
+from sqlalchemy import select
+
+from app.core.database import SessionLocal
+from app.models.blocking_action import BlockingAction
+from app.models.audit_log import AuditLog
+from scripts.enforcement_authorization_check import validate_action
+
+
+def check_approved(db, action):
+    reasons = []
+
+    if action.action_source != "ADMIN_REQUEST":
+        reasons.append("NOT_ADMIN_REQUEST")
+
+    if action.execution_status != "APPROVED_PENDING":
+        reasons.append("NOT_APPROVED_PENDING")
+
+    if action.admin_id is None:
+        reasons.append("MISSING_REQUEST_ADMIN")
+
+    approval = db.scalar(
+        select(AuditLog).where(
+            AuditLog.target_type == "blocking_action",
+            AuditLog.target_id == str(action.action_id),
+            AuditLog.action_type == "ENFORCEMENT_APPROVE",
+            AuditLog.action_result == "APPROVED_PENDING",
+        ).limit(1)
+    )
+
+    if approval is None or approval.admin_id is None:
+        reasons.append("MISSING_APPROVAL_AUDIT")
+
+    # Existing validation was designed for HISN PENDING/STAGED
+    # records. Reuse its indicator and exception checks, but
+    # handle the manual approval state separately.
+    existing = validate_action(db, action)
+
+    for finding in existing:
+        if finding == "INVALID_ACTION_STATUS":
+            continue
+        reasons.append(finding)
+
+    return reasons
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--action-id", type=int)
+    parser.add_argument("--list", action="store_true")
+    args = parser.parse_args()
+
+    if not args.list and args.action_id is None:
+        parser.error("Specify --list or --action-id")
+
+    with SessionLocal() as db:
+        if args.list:
+            actions = db.scalars(
+                select(BlockingAction)
+                .where(
+                    BlockingAction.action_source == "ADMIN_REQUEST",
+                    BlockingAction.execution_status == "APPROVED_PENDING",
+                )
+                .order_by(BlockingAction.action_id)
+                .limit(100)
+            ).all()
+
+            print("=== APPROVED PENDING ACTIONS ===")
+            for action in actions:
+                print(
+                    f"ID={action.action_id} "
+                    f"TARGET={action.target_value}"
+                )
+            print("Count:", len(actions))
+            return
+
+        action = db.get(BlockingAction, args.action_id)
+
+        if action is None:
+            print("RESULT: ACTION_NOT_FOUND")
+            raise SystemExit(2)
+
+        print("=== APPROVED ACTION PREFLIGHT ===")
+        print("Action ID:", action.action_id)
+        print("Status:", action.execution_status)
+        print("Target:", action.target_value)
+
+        findings = check_approved(db, action)
+
+        for finding in findings:
+            print("CHECK:", finding)
+
+        if findings:
+            print("RESULT: NOT AUTHORIZED")
+            raise SystemExit(2)
+
+        print("RESULT: PRELIMINARY CHECKS PASSED")
+        print("NOTE: Not permission to execute as root")
+        print("Policy changes: NONE")
+        print("Database changes: NONE")
+
+
+if __name__ == "__main__":
+    main()

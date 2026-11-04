@@ -1,0 +1,543 @@
+"""Read APIs for stored detections, decisions and administrative evidence."""
+from datetime import datetime, timezone
+from typing import Annotated
+from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi.encoders import jsonable_encoder
+from pydantic import BaseModel, Field
+from typing import Literal
+from sqlalchemy import select, func
+from sqlalchemy.orm import Session
+from app.core.auth_dependencies import require_admin
+from app.core.database import get_db
+from app.core.config import settings
+from app.models.security_event import SecurityEvent
+from app.models.security_incident import SecurityIncident
+from app.models.blocking_action import BlockingAction
+from app.models.blocking_exception import BlockingException
+from app.models.audit_log import AuditLog
+from app.models.threat_indicator import ThreatIndicator
+from app.security_engine.log_parser import normalize_destination
+from app.security_engine.detection import response_decision, matches_indicator, indicator_usable
+
+router = APIRouter(prefix='/security', tags=['Security'], dependencies=[Depends(require_admin)])
+
+
+def page(db, model, order, limit, offset, *filters):
+    stmt = select(model).where(*filters).order_by(order.desc()).limit(limit).offset(offset)
+    return jsonable_encoder(db.scalars(stmt).all())
+
+
+@router.get('/summary')
+def summary(db: Annotated[Session, Depends(get_db)]):
+    return {name: db.scalar(select(func.count()).select_from(model)) for name, model in {
+        'events': SecurityEvent, 'incidents': SecurityIncident, 'indicators': ThreatIndicator,
+        'decisions': BlockingAction, 'exceptions': BlockingException}.items()}
+
+
+@router.get('/events')
+def events(db: Annotated[Session, Depends(get_db)], limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=0)):
+    return page(db, SecurityEvent, SecurityEvent.event_id, limit, offset)
+
+
+@router.get('/incidents')
+def incidents(db: Annotated[Session, Depends(get_db)], limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=0)):
+    return page(db, SecurityIncident, SecurityIncident.incident_id, limit, offset)
+
+
+@router.get('/decisions')
+def decisions(db: Annotated[Session, Depends(get_db)], limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=0)):
+    return page(db, BlockingAction, BlockingAction.action_id, limit, offset)
+
+
+@router.get('/audit')
+def audit(db: Annotated[Session, Depends(get_db)], limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=0)):
+    return page(db, AuditLog, AuditLog.audit_id, limit, offset)
+
+
+@router.get('/exceptions')
+def exceptions(db: Annotated[Session, Depends(get_db)], limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=0)):
+    return page(db, BlockingException, BlockingException.exception_id, limit, offset)
+
+
+class ExceptionCreate(BaseModel):
+    target_type: str = Field(pattern=r'^(DOMAIN|IP)$')
+    target_value: str = Field(min_length=2, max_length=255)
+
+
+@router.post('/exceptions', status_code=201)
+def create_exception(data: ExceptionCreate, db: Annotated[Session, Depends(get_db)], admin=Depends(require_admin)):
+    from ipaddress import ip_address
+    try:
+        normalized = normalize_destination(data.target_value)
+        if data.target_type == 'IP':
+            ip_address(normalized)
+        else:
+            try:
+                ip_address(normalized)
+            except ValueError:
+                pass
+            else:
+                raise ValueError('Domain must not be an IP')
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(status_code=422, detail='Invalid exception target') from exc
+    found = db.scalar(select(BlockingException).where(BlockingException.target_type == data.target_type, BlockingException.target_value == normalized))
+    if found:
+        raise HTTPException(status_code=409, detail='Exception already exists')
+    row = BlockingException(target_type=data.target_type, target_value=normalized, created_by=admin.admin_id)
+    db.add(row)
+    db.flush()
+    db.add(AuditLog(admin_id=admin.admin_id, action_type='EXCEPTION_ADD', target_type=data.target_type,
+                    target_id=normalized, action_result='SUCCESS'))
+    db.commit()
+    db.refresh(row)
+    return jsonable_encoder(row)
+
+
+@router.delete('/exceptions/{exception_id}')
+def delete_exception(exception_id: int, db: Annotated[Session, Depends(get_db)], admin=Depends(require_admin)):
+    row = db.get(BlockingException, exception_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail='Exception not found')
+    name, value = row.target_type, row.target_value
+    db.delete(row)
+    db.add(AuditLog(admin_id=admin.admin_id, action_type='EXCEPTION_REMOVE', target_type=name,
+                    target_id=value, action_result='SUCCESS'))
+    db.commit()
+    return {'ok': True}
+
+
+@router.get('/rules')
+def rules():
+    return {'type': 'deterministic', 'window_minutes': settings.hisn_detection_window_minutes,
+        'threshold': settings.hisn_detection_threshold, 'enforcement_enabled': settings.hisn_enforcement_enabled,
+        'auto_enforce': settings.hisn_auto_enforce,
+        'note': 'Only configured deterministic TI matching is active; behavioral threshold is informational until additional correlation rules are enabled.'}
+
+
+class Preview(BaseModel):
+    destination: str = Field(min_length=1, max_length=512)
+
+
+@router.post('/preview')
+def preview(data: Preview, db: Annotated[Session, Depends(get_db)]):
+    try:
+        destination = normalize_destination(data.destination)
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(status_code=422, detail='Invalid destination') from exc
+    rows = db.scalars(select(ThreatIndicator).where(ThreatIndicator.is_active.is_(True))).all()
+    matches = [x for x in rows if indicator_usable(x) and matches_indicator(destination, x.indicator_type, x.indicator_value)]
+    exceptions = db.scalars(select(BlockingException)).all()
+    return {'destination': destination, 'matches': [
+        {'indicator_id': x.indicator_id, 'source_name': x.source_name, 'confidence': x.confidence_level,
+         'decision': response_decision(x, destination, exceptions, allowed=settings.hisn_auto_enforce).action}
+        for x in matches], 'note': 'Preview only: no blocklist changes'}
+
+
+class IncidentUpdate(BaseModel):
+    status: Literal['NEW', 'UNDER_REVIEW', 'CLOSED']
+
+
+@router.patch('/incidents/{incident_id}')
+def update_incident(incident_id: int, data: IncidentUpdate, db: Annotated[Session, Depends(get_db)], admin=Depends(require_admin)):
+    row = db.get(SecurityIncident, incident_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail='Incident not found')
+    if row.status == 'CLOSED' and data.status != 'CLOSED':
+        raise HTTPException(status_code=409, detail='Closed incidents cannot be reopened in this version')
+    row.status = data.status
+    row.updated_at = datetime.now(timezone.utc)
+    row.closed_at = row.updated_at if data.status == 'CLOSED' else None
+    db.add(AuditLog(admin_id=admin.admin_id, action_type='INCIDENT_UPDATE', target_type='security_incident',
+                    target_id=str(incident_id), action_result='SUCCESS', details=f'Status: {data.status}'))
+    db.commit()
+    return {'id': row.incident_id, 'status': row.status}
+
+
+@router.get('/incidents/{incident_id}/details')
+def incident_details(incident_id: int, db: Annotated[Session, Depends(get_db)]):
+    from app.models.incident_event import IncidentEvent
+
+    incident = db.get(SecurityIncident, incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail='Incident not found')
+
+    linked_events = db.scalars(
+        select(SecurityEvent)
+        .join(IncidentEvent, IncidentEvent.event_id == SecurityEvent.event_id)
+        .where(IncidentEvent.incident_id == incident_id)
+        .order_by(SecurityEvent.activity_at, SecurityEvent.event_id)
+    ).all()
+
+    event_ids = [event.event_id for event in linked_events]
+    decisions_by_event = {event_id: [] for event_id in event_ids}
+    if event_ids:
+        decisions = db.scalars(
+            select(BlockingAction)
+            .where(BlockingAction.event_id.in_(event_ids))
+            .order_by(BlockingAction.action_id)
+        ).all()
+        for decision in decisions:
+            decisions_by_event[decision.event_id].append({
+                'action_id': decision.action_id,
+                'target_value': decision.target_value,
+                'decision_reason': decision.decision_reason,
+                'execution_status': decision.execution_status,
+                'requested_at': decision.requested_at,
+                'executed_at': decision.executed_at,
+                'verified_at': decision.verified_at,
+                'error_message': decision.error_message,
+                # STAGED means written to a list, not necessarily enforced.
+                'enforcement_verified': decision.verified_at is not None,
+            })
+
+    indicators = {}
+    for event in linked_events:
+        if event.indicator_id is not None and event.indicator_id not in indicators:
+            indicators[event.indicator_id] = db.get(ThreatIndicator, event.indicator_id)
+
+    return jsonable_encoder({
+        'incident': {
+            'incident_id': incident.incident_id,
+            'incident_title': incident.incident_title,
+            'correlation_rule': incident.correlation_rule,
+            'status': incident.status,
+            'created_at': incident.created_at,
+            'updated_at': incident.updated_at,
+            'closed_at': incident.closed_at,
+        },
+        'event_count': len(linked_events),
+        'events': [
+            {
+                'event_id': event.event_id,
+                'event_type': event.event_type,
+                'activity_at': event.activity_at,
+                'detected_at': event.detected_at,
+                'client_ip': event.client_ip,
+                'destination': event.destination,
+                'detection_rule': event.detection_rule,
+                'evidence': event.evidence,
+                'indicator': (
+                    {
+                        'indicator_id': indicators[event.indicator_id].indicator_id,
+                        'indicator_type': indicators[event.indicator_id].indicator_type,
+                        'indicator_value': indicators[event.indicator_id].indicator_value,
+                        'source_name': indicators[event.indicator_id].source_name,
+                        'confidence_level': indicators[event.indicator_id].confidence_level,
+                    } if indicators.get(event.indicator_id) is not None else None
+                ),
+                'decisions': decisions_by_event.get(event.event_id, []),
+            } for event in linked_events
+        ],
+    })
+
+
+# HISN manual enforcement request registration.
+# Registration is NOT authorization to apply a firewall/proxy policy.
+
+import re as _enforcement_re
+
+from fastapi import HTTPException as _EnforcementHTTPException
+from fastapi import Depends as _EnforcementDepends
+from pydantic import BaseModel as _EnforcementBaseModel
+from pydantic import Field as _EnforcementField
+from sqlalchemy import select as _enforcement_select
+
+from app.core.database import get_db as _enforcement_get_db
+from app.models.threat_indicator import ThreatIndicator as _ThreatIndicator
+from app.models.blocking_exception import BlockingException as _BlockingException
+from app.models.blocking_action import BlockingAction as _BlockingAction
+from app.models.audit_log import AuditLog as _AuditLog
+from app.security_engine.detection import (
+    indicator_usable as _indicator_usable,
+    matches_indicator as _matches_indicator,
+    exception_matches as _exception_matches,
+)
+
+
+class EnforcementRequestCreate(_EnforcementBaseModel):
+    indicator_id: int = _EnforcementField(gt=0)
+    target_value: str = _EnforcementField(min_length=4, max_length=253)
+    reason: str = _EnforcementField(
+        min_length=5, max_length=500
+    )
+
+
+_ENFORCEMENT_DOMAIN_RE = _enforcement_re.compile(
+    r"^(?=.{1,253}$)"
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+)
+
+
+@router.post("/enforcement/requests", status_code=201)
+def create_enforcement_request(
+    data: EnforcementRequestCreate,
+    db: Session = _EnforcementDepends(_enforcement_get_db),
+    admin=_EnforcementDepends(require_admin),
+):
+    target = data.target_value
+
+    if (
+        target != target.strip().lower()
+        or not _ENFORCEMENT_DOMAIN_RE.fullmatch(target)
+    ):
+        raise _EnforcementHTTPException(
+            status_code=422,
+            detail="Invalid canonical domain"
+        )
+
+    indicator = db.get(_ThreatIndicator, data.indicator_id)
+
+    if indicator is None:
+        raise _EnforcementHTTPException(
+            status_code=404,
+            detail="Threat indicator not found"
+        )
+
+    if (
+        indicator.indicator_type != "DOMAIN"
+        or indicator.confidence_level != "HIGH"
+        or not _indicator_usable(indicator)
+        or not _matches_indicator(
+            target,
+            indicator.indicator_type,
+            indicator.indicator_value,
+        )
+    ):
+        raise _EnforcementHTTPException(
+            status_code=409,
+            detail="Indicator is not eligible for this target"
+        )
+
+    exceptions = db.scalars(
+        _enforcement_select(_BlockingException)
+    ).all()
+
+    if _exception_matches(target, exceptions):
+        raise _EnforcementHTTPException(
+            status_code=409,
+            detail="Approved HISN exception prevents blocking"
+        )
+
+    existing = db.scalar(
+        _enforcement_select(_BlockingAction)
+        .where(
+            _BlockingAction.indicator_id == indicator.indicator_id,
+            _BlockingAction.target_value == target,
+            _BlockingAction.action_source == "ADMIN_REQUEST",
+            _BlockingAction.execution_status == "REVIEW_REQUIRED",
+        )
+        .limit(1)
+    )
+
+    if existing is not None:
+        raise _EnforcementHTTPException(
+            status_code=409,
+            detail=f"Open review request already exists: {existing.action_id}"
+        )
+
+    action = _BlockingAction(
+        indicator_id=indicator.indicator_id,
+        target_value=target,
+        action_source="ADMIN_REQUEST",
+        decision_reason=data.reason,
+        execution_status="REVIEW_REQUIRED",
+        admin_id=admin.admin_id,
+    )
+
+    db.add(action)
+    db.flush()
+
+    db.add(
+        _AuditLog(
+            admin_id=admin.admin_id,
+            action_type="ENFORCEMENT_REQUEST",
+            target_type="blocking_action",
+            target_id=str(action.action_id),
+            action_result="REVIEW_REQUIRED",
+            details=(
+                f"Target={target}; "
+                f"Indicator={indicator.indicator_id}; "
+                f"Reason={data.reason}"
+            ),
+        )
+    )
+
+    db.commit()
+    db.refresh(action)
+
+    return {
+        "action_id": action.action_id,
+        "target_value": action.target_value,
+        "execution_status": action.execution_status,
+        "indicator_id": action.indicator_id,
+        "policy_applied": False,
+        "verification_completed": False,
+        "message": (
+            "Request recorded. Independent policy "
+            "authorization is still required."
+        ),
+    }
+
+
+# Administrative approval workflow.
+# Approval never directly stages or applies an E2Guardian policy.
+
+from sqlalchemy import update as _enforcement_update
+
+
+class EnforcementReviewInput(_EnforcementBaseModel):
+    reason: str = _EnforcementField(min_length=5, max_length=500)
+
+
+def _review_enforcement_request(
+    action_id: int,
+    data: EnforcementReviewInput,
+    db: Session,
+    admin,
+    approve: bool,
+):
+    action = db.get(_BlockingAction, action_id)
+
+    if action is None:
+        raise _EnforcementHTTPException(
+            status_code=404,
+            detail="Enforcement request not found",
+        )
+
+    if action.action_source != "ADMIN_REQUEST":
+        raise _EnforcementHTTPException(
+            status_code=409,
+            detail="Only administrative requests can be reviewed",
+        )
+
+    if action.execution_status != "REVIEW_REQUIRED":
+        raise _EnforcementHTTPException(
+            status_code=409,
+            detail="Request has already been reviewed or changed",
+        )
+
+    if approve:
+        indicator = (
+            db.get(_ThreatIndicator, action.indicator_id)
+            if action.indicator_id is not None
+            else None
+        )
+
+        if indicator is None:
+            raise _EnforcementHTTPException(
+                status_code=409,
+                detail="Associated indicator no longer exists",
+            )
+
+        if (
+            indicator.indicator_type != "DOMAIN"
+            or indicator.confidence_level != "HIGH"
+            or not _indicator_usable(indicator)
+            or not _ENFORCEMENT_DOMAIN_RE.fullmatch(
+                action.target_value
+            )
+            or not _matches_indicator(
+                action.target_value,
+                indicator.indicator_type,
+                indicator.indicator_value,
+            )
+        ):
+            raise _EnforcementHTTPException(
+                status_code=409,
+                detail="Indicator is no longer eligible",
+            )
+
+        exceptions = db.scalars(
+            _enforcement_select(_BlockingException)
+        ).all()
+
+        if _exception_matches(
+            action.target_value, exceptions
+        ):
+            raise _EnforcementHTTPException(
+                status_code=409,
+                detail="HISN exception prevents approval",
+            )
+
+        new_status = "APPROVED_PENDING"
+        audit_type = "ENFORCEMENT_APPROVE"
+
+    else:
+        new_status = "REJECTED"
+        audit_type = "ENFORCEMENT_REJECT"
+
+    # Conditional UPDATE prevents two concurrent reviews
+    # from successfully transitioning the same request.
+    result = db.execute(
+        _enforcement_update(_BlockingAction)
+        .where(
+            _BlockingAction.action_id == action_id,
+            _BlockingAction.action_source == "ADMIN_REQUEST",
+            _BlockingAction.execution_status == "REVIEW_REQUIRED",
+        )
+        .values(execution_status=new_status)
+    )
+
+    if result.rowcount != 1:
+        db.rollback()
+        raise _EnforcementHTTPException(
+            status_code=409,
+            detail="Request changed during review",
+        )
+
+    db.add(
+        _AuditLog(
+            admin_id=admin.admin_id,
+            action_type=audit_type,
+            target_type="blocking_action",
+            target_id=str(action_id),
+            action_result=new_status,
+            details=(
+                f"Target={action.target_value}; "
+                f"Indicator={action.indicator_id}; "
+                f"Reason={data.reason}; "
+                "PolicyApplied=False"
+            ),
+        )
+    )
+
+    db.commit()
+
+    return {
+        "action_id": action_id,
+        "execution_status": new_status,
+        "reviewed_by": admin.admin_id,
+        "policy_applied": False,
+        "verification_completed": False,
+        "message": (
+            "Approved for further enforcement review; "
+            "policy has not been applied."
+            if approve
+            else "Enforcement request rejected."
+        ),
+    }
+
+
+@router.post("/enforcement/requests/{action_id}/approve")
+def approve_enforcement_request(
+    action_id: int,
+    data: EnforcementReviewInput,
+    db: Session = _EnforcementDepends(_enforcement_get_db),
+    admin=_EnforcementDepends(require_admin),
+):
+    return _review_enforcement_request(
+        action_id, data, db, admin, approve=True
+    )
+
+
+@router.post("/enforcement/requests/{action_id}/reject")
+def reject_enforcement_request(
+    action_id: int,
+    data: EnforcementReviewInput,
+    db: Session = _EnforcementDepends(_enforcement_get_db),
+    admin=_EnforcementDepends(require_admin),
+):
+    return _review_enforcement_request(
+        action_id, data, db, admin, approve=False
+    )
